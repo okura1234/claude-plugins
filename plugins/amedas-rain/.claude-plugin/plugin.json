@@ -1,9 +1,20 @@
 {
   "name": "amedas-rain",
   "displayName": "AMeDAS Rain (JMA official)",
-  "description": "気象庁公式データから任意の地名の雨量・警報・注意報・1kmメッシュ解析雨量/キキクル・推定WBGTを取得するスキル。認証不要・公式エンドポイントのみ。",
+  "description": "気象庁公式データから、地名または郵便番号で雨量・警報/注意報・1kmメッシュ解析雨量/キキクル・暑さ指数(WBGT)を取得するスキル。認証不要・公式エンドポイントのみ。WBGTは近隣アメダス観測所の気温・湿度から算出した推定値で、現地観測ではなく参考値です。",
   "version": "1.1.0",
-  "author": { "name": "okura1234" },
+  "author": {
+    "name": "okura1234"
+  },
   "license": "MIT",
-  "keywords": ["jma", "amedas", "rain", "weather", "wbgt", "japan", "気象庁", "雨量"]
+  "keywords": [
+    "jma",
+    "amedas",
+    "rain",
+    "weather",
+    "wbgt",
+    "japan",
+    "気象庁",
+    "雨量"
+  ]
 }
