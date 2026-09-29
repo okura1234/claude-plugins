@@ -16,5 +16,7 @@
     "japan",
     "気象庁",
     "雨量"
-  ]
+  ],
+  "privacyPolicyUrl": "https://github.com/okura1234/claude-plugins/blob/main/plugins/amedas-rain/README.md#privacy",
+  "homepage": "https://github.com/okura1234/claude-plugins/tree/main/plugins/amedas-rain"
 }
