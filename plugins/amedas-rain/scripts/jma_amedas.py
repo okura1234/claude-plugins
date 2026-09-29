@@ -63,13 +63,14 @@ def zip_resolve(z):
     lon,lat=g[0]["geometry"]["coordinates"]
     best=None
     for code,v in load_table().items():
-        if not str(v.get("elems","")).startswith("1"): continue   # 雨量計あり
+        e=str(v.get("elems","")); 
+        if len(e)<2 or e[1]!="1": continue   # 雨量計あり
         la=v["lat"][0]+v["lat"][1]/60; lo=v["lon"][0]+v["lon"][1]/60
         d=math.hypot((la-lat)*111, (lo-lon)*111*math.cos(math.radians(lat)))
         if best is None or d<best[0]: best=(d,code,v.get("kjName",""))
-    pref=a.get("prefcode","")+"0000"
+    pc=a.get("prefcode",""); pref={"01":"016000","46":"460100","47":"471000"}.get(pc, pc+"0000")
     print(f"〒{z[:3]}-{z[3:]} {addr} ({lat:.4f},{lon:.4f}) → 最寄り観測所 {best[2]}({best[1]}) 約{best[0]:.1f}km")
-    return best[1],best[2],lat,lon,addr,(pref if pref in PREF.values() else None)
+    return best[1],best[2],lat,lon,addr,pref
 
 def val(x):
     return None if (not isinstance(x,list) or x[0] is None) else x[0]
@@ -400,11 +401,25 @@ def _env_official(code,months):
     return off
 
 def wbgt_report(code,days,times):
+    t=load_table()
     cfg=WBGT_PROXY.get(code)
     if not cfg:
-        print(f"WBGT代替観測の設定なし(code={code})。対応: {'/'.join(WBGT_PROXY)}"); return
+        # 汎用: 対象観測所に気温(elems[0])と湿度(elems[5])があれば自前、無ければ最寄りの気温湿度観測所で代替。過去日も bosai 速報値(約10日)で賄う
+        def _th_ok(v):
+            e=str(v.get("elems","")); return len(e)>=6 and e[0]=="1" and e[5]=="1"
+        v0=t.get(code) or {}
+        if _th_ok(v0): src=code
+        else:
+            la0=v0["lat"][0]+v0["lat"][1]/60; lo0=v0["lon"][0]+v0["lon"][1]/60; best=None
+            for c,v in t.items():
+                if not _th_ok(v): continue
+                la=v["lat"][0]+v["lat"][1]/60; lo=v["lon"][0]+v["lon"][1]/60
+                d=math.hypot((la-la0)*111,(lo-lo0)*111*math.cos(math.radians(la0)))
+                if best is None or d<best[0]: best=(d,c)
+            if not best: print("気温・湿度を観測する近傍観測所が見つからない"); return
+            src=best[1]; print(f"※{v0.get('kjName',code)}は気温/湿度の観測なし→最寄り {t[src]['kjName']}({src}) 約{best[0]:.0f}km で代替")
+        cfg=(src,None,src,None,src)
     tsrc,tetrn,hsrc,hetrn,offcode=cfg
-    t=load_table()
     names={c:(t.get(c) or {}).get("kjName",c) for c in (code,tsrc,hsrc)}
     today=latest_time().date()
     start=today-datetime.timedelta(days=days-1)
@@ -422,7 +437,7 @@ def wbgt_report(code,days,times):
     day=start
     while day<=today:
         cells=[]
-        use_etrn = day<today
+        use_etrn = day<today and tetrn is not None
         erows_t=erows_h=None
         if use_etrn:
             try:
