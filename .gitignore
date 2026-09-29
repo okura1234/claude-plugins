@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+plugins/amedas-rain/scripts/amedastable.json
+.DS_Store

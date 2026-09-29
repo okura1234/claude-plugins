@@ -1,0 +1,66 @@
+---
+name: amedas-rain
+description: 任意の地名・期間の雨量を気象庁公式データ(bosai AMeDAS 速報値)から取得。--outlook で現況の警報/注意報と気象台の見通し文、--site lat,lon で現場座標の1kmメッシュ解析雨量とキキクル、--wbgt で推定WBGT(暑さ指数)も出せる。「東京の雨量」「千葉の直近N日」「〒260-0013の雨量」「何ミリ」「警報出そう?」「WBGT」「暑さ指数」で発動。民間天気サイトのスクレイプは使わない。
+---
+
+# amedas-rain — 気象庁公式 雨量・警報・WBGT
+
+## 何をするか
+地名→気象庁AMeDAS観測所コードを自動解決し、**日別降水量＋最新値（10分/1時間/24時間積算）**を出す。
+データは気象庁 bosai AMeDAS **速報値**（10分毎更新・認証不要・公式）。
+
+## 実行
+スクリプトはこのプラグインの `scripts/jma_amedas.py`。`${CLAUDE_PLUGIN_ROOT}` を起点に呼ぶ。
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/jma_amedas.py 東京              # 地名で直近4日
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/jma_amedas.py 千葉 --days 7
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/jma_amedas.py --code 44132 --days 4
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/jma_amedas.py 東京 --list       # 曖昧地名→候補一覧
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/jma_amedas.py 東京 --outlook    # 雨量＋現況警報＋気象台見通し文
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/jma_amedas.py 千葉 --outlook --pref 千葉   # 他県は --pref
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/jma_amedas.py 東京 --site 35.681,139.767  # 座標直上の1kmメッシュ(解析雨量＋キキクル)
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/jma_amedas.py 東京 --wbgt --days 7     # 推定WBGT(8:30/13:00)
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/jma_amedas.py 東京 --wbgt --times "10:00,15:00"
+```
+- **郵便番号**（`260-0013` / `2600013` / `〒260-0013`）も地名の代わりに指定可。zipcloud→国土地理院ジオコーダで座標化し、雨量計のある最寄り観測所を自動選択。`--pref` 未指定なら住所の都道府県を既定にし、`--site` を値なしで付けるとその住所の座標を使う。`--outlook` の市区町村照合も住所で行う。
+- 地名は部分一致。複数該当時は候補一覧が表示される。候補が1件に絞れる場合はそのコードで再実行し、絞れない場合は自分で選ばず候補をユーザーに提示して確認してから `--code` で確定する。
+- 観測所コード表は `scripts/amedastable.json` に初回自動キャッシュ。
+- `--site` は座標必須（既定座標なし）。地名は「近傍アメダス」の指定として併記する。
+
+## --outlook（警報の見通し）
+3点を1コマンド: ①雨量実況・日別 ②現況の警報/注意報（新・防災気象情報JSON r8。レベル付き。`--code`指定時は観測所名で市町村を引く） ③気象台の見通し文（概況テキスト）。
+- **「警報が出そうか」は予測可**（気象台見通し文＋現況＋基準距離）。
+- **「いつ解除か」は予測しない**。土壌雨量指数は降雨後も長く残る（半減期>1日）＋新規降雨で覆る。出せるのは「最短でも当面下がらない」下限の推測のみ（出力末尾に明記）。
+- `--pref` 既定=東京(130000)。他県は県名（東京/千葉/神奈川/埼玉/大阪/愛知/長崎/佐賀/福岡/熊本/大分/宮崎/鹿児島/沖縄）か府県コード指定。
+
+## データ源（一次情報・公式エンドポイント）
+| 用途 | URL |
+|---|---|
+| 最新時刻 | `https://www.jma.go.jp/bosai/amedas/data/latest_time.txt` |
+| 観測点データ(3h単位) | `https://www.jma.go.jp/bosai/amedas/data/point/<code>/<YYYYMMDD_HH>.json` |
+| 観測所マスタ | `https://www.jma.go.jp/bosai/amedas/const/amedastable.json` |
+| 警報・注意報JSON | `https://www.jma.go.jp/bosai/warning/data/r8/<府県>.json`（class20Items）＋市町村コード `bosai/common/const/area.json` |
+| 記録的短時間大雨XML | `https://www.data.jma.go.jp/developer/xml/feed/extra.xml` → `VPOA50_<府県>.xml` |
+
+## 制約・注意（重要）
+- **速報値**。照会期間が直近7日以内なら本ツールで対応する。それより古い期間、または正式統計が必要な場合は気象庁 etrn 確定値（別系統・確定処理にタイムラグあり）を案内する。
+- 当日や直近は10分値のコマ数が揃うまで**過小表示**（`※Nコマのみ`と注記される）。この注記が出た日の値は確定として扱わず、ユーザーへの報告にも「コマ数不足で過小の可能性あり」と必ず明記する。
+- 日別は10分降水量(precipitation10m)の合算。確定値とは±数mm程度ずれうる。
+- 民間天気サイトのスクレイプ値は取得・引用しない（雨量の出典は気象庁公式=bosai速報値/etrn確定値のみ）。
+
+## --site（座標ピンポイント 1kmグリッド）
+平地アメダス点ではなく**指定座標の真上1kmメッシュ**を読む（山間部の地形性降雨を捕捉）。JMAタイルを画素サンプリング（Pillow使用、ズーム=z10）。
+- 取得: 解析雨量(`nowc/hrpns`)＋キキクル3種(`risk/rain_mesh`表面雨量=大雨/`flood_mesh`流域雨量=洪水/`land`土壌雨量=土砂)
+- タイルURL: `https://www.jma.go.jp/bosai/jmatile/data/{nowc|risk}/{basetime}/{member}/{validtime}/surf/{element}/{z}/{x}/{y}.png`。basetimeはUTC（表示時+9h）。
+- **色のビン値**: 解析雨量はmm/h帯、キキクルは5段階レベル（正確な数値ではない）。凡例: 解析雨量(33,140,255)=5〜10mm/h、キキクル黄(242,231,0)=L2/赤(255,40,0)=L3/紫(170,0,255)=L4/黒紫(12,0,64)=L5。
+- z12は空タイル→z10固定。
+
+## --wbgt（推定WBGT・暑さ指数）
+- 式: `WBGT = 0.7×Tw + 0.2×Tg + 0.1×Ta`（屋外式）。Tw=Stull(2011)近似（気温+湿度）。Tg=Ta基礎。環境省公式WBGT実況（`wbgt.env.go.jp`）との差分で日射補正（4〜10月のみ）。
+- データ源: **当日=bosai速報10分値 / 過去日=etrn確定10分値**。速報値の約10日制限を超えて遡れる。
+- 対応地点は `WBGT_PROXY` 定数に定義されたもののみ（初期は東京・千葉・長崎・諫早）。対応外の地点を求められた場合は代替値を出さず未対応と伝え、`WBGT_PROXY` へ地点追加して対応するかをユーザーに確認する。
+- あくまで**推定値**で、しかも**観測所の気温・湿度から算出した値**（指定地点そのものの観測ではない）。近隣でも地形・日射で数度ずれうる。ユーザーへの報告時は「観測所の値からの推定であり参考程度。屋外作業の判断は現地の黒球付きWBGT計の実測を正とする」旨を毎回1行添える。区分: 〜21ほぼ安全/21〜25注意/25〜28警戒/28〜31厳重警戒/31〜危険。
+
+## 判断はユーザーが行う
+作業中止基準（例: 連続雨量・時間雨量のしきい値）との突合を求められた場合は、取得した雨量と基準値を並記して提示するまでに留め、中止するかの判断はユーザーが行う（自動判定はしない）。
