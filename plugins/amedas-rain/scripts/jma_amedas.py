@@ -22,7 +22,12 @@ OVERVIEW = "https://www.jma.go.jp/bosai/forecast/data/overview_forecast"
 TABLE_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "amedastable.json")
 
 # 府県予報区コード（主要・必要に応じ --pref で指定可）
-PREF = {"東京":"130000","千葉":"120000","神奈川":"140000","埼玉":"110000","大阪":"270000","愛知":"230000",
+PREF = {"北海道":"016000","青森":"020000","岩手":"030000","宮城":"040000","秋田":"050000","山形":"060000","福島":"070000",
+        "茨城":"080000","栃木":"090000","群馬":"100000","埼玉":"110000","千葉":"120000","東京":"130000","神奈川":"140000",
+        "新潟":"150000","富山":"160000","石川":"170000","福井":"180000","山梨":"190000","長野":"200000","岐阜":"210000",
+        "静岡":"220000","愛知":"230000","三重":"240000","滋賀":"250000","京都":"260000","大阪":"270000","兵庫":"280000",
+        "奈良":"290000","和歌山":"300000","鳥取":"310000","島根":"320000","岡山":"330000","広島":"340000","山口":"350000",
+        "徳島":"360000","香川":"370000","愛媛":"380000","高知":"390000",
         "長崎":"420000","佐賀":"410000","福岡":"400000","熊本":"430000",
         "大分":"440000","宮崎":"450000","鹿児島":"460100","沖縄":"471000"}
 
@@ -52,25 +57,47 @@ def resolve(place):
 ZIPAPI="https://zipcloud.ibsnet.co.jp/api/search?zipcode={z}"
 GSIGEO="https://msearch.gsi.go.jp/address-search/AddressSearch?q={q}"
 def is_zip(s): return bool(re.fullmatch(r"〒?\d{3}-?\d{4}", s or ""))
-def zip_resolve(z):
-    """郵便番号→(code, 観測所名, lat, lon, 住所, 府県コード or None)。雨量観測のある最寄り観測所を選ぶ"""
-    z=re.sub(r"\D","",z)
-    r=_get(ZIPAPI.format(z=z))
-    if not r.get("results"): sys.exit(f"郵便番号が見つからない: {z}")
-    a=r["results"][0]; addr=a["address1"]+a["address2"]+a["address3"]
-    g=_get(GSIGEO.format(q=urllib.parse.quote(addr)))
-    if not g: sys.exit(f"住所の座標が引けない: {addr}")
-    lon,lat=g[0]["geometry"]["coordinates"]
+def is_latlon(s): return bool(re.fullmatch(r"-?\d{1,2}(\.\d+)?\s*,\s*-?\d{1,3}(\.\d+)?", s or ""))
+def _nearest_rain_station(lat,lon):
     best=None
     for code,v in load_table().items():
-        e=str(v.get("elems","")); 
+        e=str(v.get("elems",""))
         if len(e)<2 or e[1]!="1": continue   # 雨量計あり
         la=v["lat"][0]+v["lat"][1]/60; lo=v["lon"][0]+v["lon"][1]/60
         d=math.hypot((la-lat)*111, (lo-lon)*111*math.cos(math.radians(lat)))
         if best is None or d<best[0]: best=(d,code,v.get("kjName",""))
-    pc=a.get("prefcode",""); pref={"01":"016000","46":"460100","47":"471000"}.get(pc, pc+"0000")
-    print(f"〒{z[:3]}-{z[3:]} {addr} ({lat:.4f},{lon:.4f}) → 最寄り観測所 {best[2]}({best[1]}) 約{best[0]:.1f}km")
-    return best[1],best[2],lat,lon,addr,pref
+    return best
+def _pref_from_addr(addr):
+    for nm,cd in PREF.items():
+        if addr.startswith(nm): return cd
+    return None
+def locate(q):
+    """郵便番号 / 緯度,経度 / 住所 → (code, 観測所名, lat, lon, 表示ラベル, 府県コード or None)。雨量観測のある最寄り観測所を選ぶ"""
+    if is_zip(q):
+        z=re.sub(r"\D","",q); r=_get(ZIPAPI.format(z=z))
+        if not r.get("results"): sys.exit(f"郵便番号が見つからない: {z}")
+        a=r["results"][0]; addr=a["address1"]+a["address2"]+a["address3"]
+        g=_get(GSIGEO.format(q=urllib.parse.quote(addr)))
+        if not g: sys.exit(f"住所の座標が引けない: {addr}")
+        lon,lat=g[0]["geometry"]["coordinates"]; label=f"〒{z[:3]}-{z[3:]} {addr}"
+        pc=a.get("prefcode",""); pref={"01":"016000","46":"460100","47":"471000"}.get(pc, pc+"0000")
+    elif is_latlon(q):
+        lat,lon=[float(v) for v in q.split(",")]
+        addr=""; label=f"位置情報"; pref=None
+    else:
+        g=_get(GSIGEO.format(q=urllib.parse.quote(q)))
+        if not g: return None
+        lon,lat=g[0]["geometry"]["coordinates"]; addr=g[0]["properties"].get("title",q)
+        label=f"住所 {addr}"; pref=_pref_from_addr(addr)
+    muni=None
+    try:
+        rg=_get("https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lon=%s&lat=%s"%(lon,lat))
+        muni=(rg.get("results") or {}).get("muniCd") or None
+        if muni and not pref: pref={"01":"016000","46":"460100","47":"471000"}.get(muni[:2], muni[:2]+"0000")
+    except Exception: pass
+    best=_nearest_rain_station(lat,lon)
+    print(f"{label} ({lat:.4f},{lon:.4f}) → 最寄り観測所 {best[2]}({best[1]}) 約{best[0]:.1f}km")
+    return best[1],best[2],lat,lon,addr,pref,muni
 
 def val(x):
     return None if (not isinstance(x,list) or x[0] is None) else x[0]
@@ -103,12 +130,16 @@ WARN_CODES={
  "14":("雷",2,"雷注意報"),"17":("融雪",2,"融雪注意報"),"20":("濃霧",2,"濃霧注意報"),"21":("乾燥",2,"乾燥注意報"),
  "22":("なだれ",2,"なだれ注意報"),"23":("低温",2,"低温注意報"),"24":("霜",2,"霜注意報"),"25":("着氷",2,"着氷注意報"),"26":("着雪",2,"着雪注意報"),
 }
-def get_warnings(pref, place):
+def get_warnings(pref, place, muni=None):
     """新・防災気象情報JSON(r8)から、市町村名に place を含む地区の発表中 警報/注意報 を返す。
     戻り: (rdt, (名称リスト, 地区名リスト))。取得失敗 (None,None)"""
     try:
         cls=_get("https://www.jma.go.jp/bosai/common/const/area.json")["class20s"]
-        codes={k:v["name"] for k,v in cls.items() if k.startswith(pref[:2]) and place and (place in v["name"] or v["name"] in place)}
+        codes={}
+        if muni:
+            codes={k:v["name"] for k,v in cls.items() if k.startswith(muni)}
+            if not codes: codes={k:v["name"] for k,v in cls.items() if k.startswith(muni[:3]+"00")}   # 政令市の区→市
+        if not codes: codes={k:v["name"] for k,v in cls.items() if k.startswith(pref[:2]) and place and (place in v["name"] or v["name"] in place)}
         data=_get(f"https://www.jma.go.jp/bosai/warning/data/r8/{pref}.json")
     except Exception as e:
         print(f"(警報取得失敗 {e})"); return None,None
@@ -170,12 +201,18 @@ def main():
                     help="推定WBGT(屋外)。既定時刻8:30/13:00、--times 'H:MM,H:MM'で変更可")
     ap.add_argument("--times", default="8:30,13:00", help="--wbgt の対象時刻(カンマ区切り)")
     a=ap.parse_args()
-    ziploc=None; zipcity=None
-    if a.place and is_zip(a.place):
-        c,n,la,lo,addr,pc=zip_resolve(a.place)
-        a.code=a.code or c; ziploc=(la,lo); zipcity=addr
+    ziploc=None; zipcity=None; zipmuni=None
+    def _apply(loc):
+        nonlocal ziploc, zipcity, zipmuni
+        c,n,la,lo,addr,pc,mu=loc
+        a.code=a.code or c; ziploc=(la,lo); zipcity=addr; zipmuni=mu
         if a.pref is None and pc: a.pref=pc
         if a.site=="": a.site=f"{la},{lo}"
+    if a.place and (is_zip(a.place) or is_latlon(a.place)):
+        _apply(locate(a.place))
+    elif a.place and not a.code and not a.list and not resolve(a.place):
+        loc=locate(a.place)   # 観測所名に無ければ住所として解決
+        if loc: _apply(loc)
 
     if a.wbgt:
         code=a.code
@@ -219,7 +256,7 @@ def main():
         wplace=zipcity or a.place
         if not wplace and code:   # --code指定時は観測所の漢字名で市町村を引く
             wplace=(load_table().get(str(code),{}).get("kjName") or "")
-        rdt,w=get_warnings(pref, wplace)
+        rdt,w=get_warnings(pref, wplace, zipmuni)
         if w is None:
             print("【現況 警報・注意報】取得失敗")
         else:
